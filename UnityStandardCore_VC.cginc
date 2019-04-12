@@ -164,10 +164,10 @@ float3 PerPixelWorldNormal(float4 i_tex, float4 tangentToWorld[3])
 #define IN_LIGHTDIR_FWDADD(i) half3(i.tangentToWorldAndLightDir[0].w, i.tangentToWorldAndLightDir[1].w, i.tangentToWorldAndLightDir[2].w)
 
 #define FRAGMENT_SETUP(x) FragmentCommonData x = \
-    FragmentSetup(i.tex, i.eyeVec, IN_VIEWDIR4PARALLAX(i), i.tangentToWorldAndPackedData, IN_WORLDPOS(i));
+    FragmentSetup(i.tex, i.eyeVec.xyz, IN_VIEWDIR4PARALLAX(i), i.tangentToWorldAndPackedData, IN_WORLDPOS(i));
 
 #define FRAGMENT_SETUP_FWDADD(x) FragmentCommonData x = \
-    FragmentSetup(i.tex, i.eyeVec, IN_VIEWDIR4PARALLAX_FWDADD(i), i.tangentToWorldAndLightDir, IN_WORLDPOS_FWDADD(i));
+    FragmentSetup(i.tex, i.eyeVec.xyz, IN_VIEWDIR4PARALLAX_FWDADD(i), i.tangentToWorldAndLightDir, IN_WORLDPOS_FWDADD(i));
 
 struct FragmentCommonData
 {
@@ -360,7 +360,7 @@ struct VertexOutputForwardBase
 {
     UNITY_POSITION(pos);
     float4 tex                            : TEXCOORD0;
-    float3 eyeVec                         : TEXCOORD1;
+    float4 eyeVec                         : TEXCOORD1;    // eyeVec.xyz | fogCoord
     float4 tangentToWorldAndPackedData[3] : TEXCOORD2;    // [3x3:tangentToWorld | 1x3:viewDirForParallax or worldPos]
     half4 ambientOrLightmapUV             : TEXCOORD5;    // SH or Lightmap UV
 	half4 color : COLOR;
@@ -404,7 +404,7 @@ VertexOutputForwardBase vertForwardBase (VertexInput_VC v)
     o.pos = UnityObjectToClipPos(v.vertex);
 
     o.tex = TexCoords(v);
-    o.eyeVec = NormalizePerVertexNormal(posWorld.xyz - _WorldSpaceCameraPos);
+    o.eyeVec.xyz = NormalizePerVertexNormal(posWorld.xyz - _WorldSpaceCameraPos);
     float3 normalWorld = UnityObjectToWorldNormal(v.normal);
     #ifdef _TANGENT_TO_WORLD
         float4 tangentWorld = float4(UnityObjectToWorldDir(v.tangent.xyz), v.tangent.w);
@@ -433,7 +433,8 @@ VertexOutputForwardBase vertForwardBase (VertexInput_VC v)
     #endif
 
 	o.color = v.color;
-    UNITY_TRANSFER_FOG(o,o.pos);
+
+    UNITY_TRANSFER_FOG_COMBINED_WITH_EYE_VEC(o,o.pos);
     return o;
 }
 
@@ -460,8 +461,9 @@ half4 fragForwardBaseInternal (VertexOutputForwardBase i)
 #if _VERTEXCOLOR_LERP
 	c *= lerp(half4(1, 1, 1, 1), i.color, _IntensityVC);
 #endif
-
-    UNITY_APPLY_FOG(i.fogCoord, c.rgb);
+    
+    UNITY_EXTRACT_FOG_FROM_EYE_VEC(i);
+    UNITY_APPLY_FOG(_unity_fogCoord, c.rgb);
 #if _VERTEXCOLOR
 	s.alpha *= i.color.a;
 #endif
@@ -483,7 +485,7 @@ struct VertexOutputForwardAdd
 {
     UNITY_POSITION(pos);
     float4 tex                          : TEXCOORD0;
-    float3 eyeVec                       : TEXCOORD1;
+    float4 eyeVec                       : TEXCOORD1;    // eyeVec.xyz | fogCoord
     float4 tangentToWorldAndLightDir[3] : TEXCOORD2;    // [3x3:tangentToWorld | 1x3:lightDir]
     float3 posWorld                     : TEXCOORD5;
 	half4  color						: COLOR;
@@ -518,7 +520,7 @@ VertexOutputForwardAdd vertForwardAdd (VertexInput_VC v)
     o.pos = UnityObjectToClipPos(v.vertex);
 
     o.tex = TexCoords(v);
-    o.eyeVec = NormalizePerVertexNormal(posWorld.xyz - _WorldSpaceCameraPos);
+    o.eyeVec.xyz = NormalizePerVertexNormal(posWorld.xyz - _WorldSpaceCameraPos);
     o.posWorld = posWorld.xyz;
     float3 normalWorld = UnityObjectToWorldNormal(v.normal);
     #ifdef _TANGENT_TO_WORLD
@@ -553,14 +555,16 @@ VertexOutputForwardAdd vertForwardAdd (VertexInput_VC v)
 		o.color = lerp(fixed4(1, 1, 1, 1), fixed4(1, 1, 1, 1) * v.color, _IntensityVC);
 	//#endif
 
-    UNITY_TRANSFER_FOG(o,o.pos);
+    UNITY_TRANSFER_FOG_COMBINED_WITH_EYE_VEC(o,o.pos);
     return o;
 }
 
 half4 fragForwardAddInternal (VertexOutputForwardAdd i)
 {
     UNITY_APPLY_DITHER_CROSSFADE(i.pos.xy);
-
+    
+    UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
+    
     FRAGMENT_SETUP_FWDADD(s)
 
     UNITY_LIGHT_ATTENUATION(atten, i, s.posWorld)
@@ -569,8 +573,9 @@ half4 fragForwardAddInternal (VertexOutputForwardAdd i)
 
     half4 c = UNITY_BRDF_PBS (s.diffColor, s.specColor, s.oneMinusReflectivity, s.smoothness, s.normalWorld, -s.eyeVec, light, noIndirect);
     c *= i.color;
-
-    UNITY_APPLY_FOG_COLOR(i.fogCoord, c.rgb, half4(0,0,0,0)); // fog towards black in additive pass
+    
+    UNITY_EXTRACT_FOG_FROM_EYE_VEC(i);
+    UNITY_APPLY_FOG_COLOR(_unity_fogCoord, c.rgb, half4(0,0,0,0)); // fog towards black in additive pass
     return OutputForward (c, s.alpha);
 }
 
